@@ -23,7 +23,7 @@ export async function checkPasswordHash(password: string, hash: string) {
 type payload = Pick<JwtPayload, "iss" | "sub" | "iat" | "exp">;
 
 export function makeJWT(userID: string, secret: string, expiresIn: number) {
-  const issuedAt = Math.floor(Date.now() / 1000);
+  const issuedAt = Math.floor(Date.now() / 1000); // in seconds
   const expiresAt = issuedAt + expiresIn;
   const token = jwt.sign(
     {
@@ -33,7 +33,7 @@ export function makeJWT(userID: string, secret: string, expiresIn: number) {
       exp: expiresAt,
     } satisfies payload,
     secret,
-    { algorithm: "HS256" },
+    { algorithm: "HS256" }
   );
 
   return token;
