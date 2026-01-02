@@ -5,6 +5,8 @@ import type { ApiConfig } from "../config";
 import type { BunRequest } from "bun";
 import { BadRequestError, NotFoundError, UserForbiddenError } from "./errors";
 import { Buffer } from "node:buffer";
+import path from "node:path";
+import { randomBytes } from "node:crypto";
 
 type Thumbnail = {
   data: ArrayBuffer;
@@ -18,6 +20,10 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
   if (!videoId) {
     throw new BadRequestError("Invalid video ID");
   }
+
+  // using random bytes for storage
+  let newFileName = randomBytes(32).toString("base64url");
+  console.log(newFileName);
 
   const formData = await req.formData();
   const file = formData.get("thumbnail");
@@ -33,11 +39,17 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
   }
 
   const mediaType = file.type;
+  const fileExtension = mediaType.split("/")[1];
   const fileData: ArrayBuffer = await file.arrayBuffer(); // reading array buffer
   // converting data to file buffer
   const fileBuff = Buffer.from(fileData);
-  const bufferBase64 = fileBuff.toString("base64");
-  const fileDataURL = `data:${mediaType};base64,${bufferBase64}`;
+
+  // uploading to path
+  const uploadPath = path.join(
+    cfg.assetsRoot,
+    `${newFileName}.${fileExtension}`
+  );
+  await Bun.write(uploadPath, fileBuff);
 
   const token = getBearerToken(req.headers);
   const userID = validateJWT(token, cfg.jwtSecret);
@@ -53,9 +65,8 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
   if (video?.userID != userID) {
     throw new UserForbiddenError("User is not authorized to edit video");
   }
-  // let thumbnail_url = `http://localhost:${cfg.port}/api/thumbnails/${videoId}`;
 
-  video.thumbnailURL = fileDataURL;
+  video.thumbnailURL = `http://localhost:${cfg.port}/assets/${newFileName}.${fileExtension}`;
 
   updateVideo(cfg.db, video);
 

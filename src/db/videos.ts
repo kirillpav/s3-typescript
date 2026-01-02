@@ -63,7 +63,7 @@ export function getVideos(db: Database, userID: string): Video[] {
 
 export function createVideo(
   db: Database,
-  params: CreateVideoParams,
+  params: CreateVideoParams
 ): Video | undefined {
   const id = randomUUID();
 
