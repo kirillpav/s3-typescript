@@ -7,6 +7,60 @@ import { BadRequestError, NotFoundError, UserForbiddenError } from "./errors";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 
+async function getVideoAspectRatio(filePath: string) {
+  // ffprobe command
+  const proc = Bun.spawn(
+    [
+      "ffprobe",
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=width,height",
+      "-of",
+      "json",
+      filePath,
+    ],
+    {
+      stdout: "pipe",
+      stderr: "pipe",
+    }
+  );
+
+  const output = await new Response(proc.stdout).text();
+  const error = await new Response(proc.stderr).text();
+
+  await proc.exited;
+
+  if (proc.exitCode !== 0) {
+    return error;
+  }
+
+  const data = JSON.parse(output);
+  const videoStream = data.streams[0];
+
+  if (!videoStream) {
+    throw new NotFoundError("No video stream found");
+  }
+
+  const width = videoStream.width;
+  const height = videoStream.height;
+
+  const ratio = width / height;
+  const landscapeRatio = 16 / 9;
+  const portraitRatio = 9 / 16;
+  const tolerance = 0.1;
+
+  if (Math.abs(ratio - landscapeRatio) < tolerance) {
+    return "landscape";
+  } else if (Math.abs(ratio - portraitRatio) < tolerance) {
+    return "portrait";
+  } else {
+    return "other";
+  }
+}
+
 export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   const MAX_UPLOAD_VIDEO_SIZE = 1 << 30;
 
@@ -49,9 +103,11 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
 
   await Bun.write(uploadPath, file);
 
+  const aspectRatio = await getVideoAspectRatio(uploadPath);
+
   // putting video object in s3
   const newFileName = randomBytes(32).toString("hex");
-  const fileKey = `${newFileName}.${fileExtension}`;
+  const fileKey = `${aspectRatio}/${newFileName}.${fileExtension}`;
   const videoFile = Bun.file(uploadPath);
   const s3Client = cfg.s3Client.file(fileKey, {
     type: file.type,
