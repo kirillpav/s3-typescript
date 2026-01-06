@@ -2,10 +2,44 @@ import { respondWithJSON } from "./json";
 import { getBearerToken, validateJWT } from "../auth";
 import { getVideo, updateVideo } from "../db/videos";
 import { type ApiConfig } from "../config";
-import { S3Client, type BunRequest, type S3File } from "bun";
+import { s3, S3Client, type BunRequest, type S3File } from "bun";
 import { BadRequestError, NotFoundError, UserForbiddenError } from "./errors";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
+import type { Video } from "../db/videos";
+
+async function processVideoForFastStart(filePath: string) {
+  const newPath = filePath + ".processed";
+
+  const proc = Bun.spawn(
+    [
+      "ffmpeg",
+      "-i",
+      filePath,
+      "-movflags",
+      "faststart",
+      "-map_metadata",
+      "0",
+      "-codec",
+      "copy",
+      "-f",
+      "mp4",
+      newPath,
+    ],
+    {
+      stdout: "pipe",
+      stderr: "pipe",
+    }
+  );
+
+  await proc.exited;
+
+  if (proc.exitCode != 0) {
+    throw new Error("Error");
+  }
+
+  return newPath;
+}
 
 async function getVideoAspectRatio(filePath: string) {
   // ffprobe command
@@ -100,15 +134,15 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
 
   const fileExtension = file.type.split("/")[1];
   const uploadPath = path.join(cfg.assetsRoot, `${videoId}.${fileExtension}`);
-
   await Bun.write(uploadPath, file);
 
   const aspectRatio = await getVideoAspectRatio(uploadPath);
+  const processedVideo = await processVideoForFastStart(uploadPath);
 
   // putting video object in s3
   const newFileName = randomBytes(32).toString("hex");
   const fileKey = `${aspectRatio}/${newFileName}.${fileExtension}`;
-  const videoFile = Bun.file(uploadPath);
+  const videoFile = Bun.file(processedVideo);
   const s3Client = cfg.s3Client.file(fileKey, {
     type: file.type,
   });
@@ -117,10 +151,13 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
 
   // clean up
   await Bun.file(uploadPath).delete();
+  await Bun.file(processedVideo).delete();
 
-  const s3URL = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${fileKey}`;
-  video.videoURL = s3URL;
+  const videoURL = `https://${cfg.s3CfDistribution}/${fileKey}`;
+
+  video.videoURL = videoURL;
+
   updateVideo(cfg.db, video);
 
-  return respondWithJSON(200, null);
+  return respondWithJSON(200, video);
 }
